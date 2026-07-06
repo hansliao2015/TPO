@@ -30,7 +30,7 @@ class ChatVLLM(EngineLM, CachedEngine):
         self.tokenizer = self.client.get_tokenizer()
 
     def generate(
-        self, prompt, system_prompt=None, temperature=0.7, max_tokens=4096, top_p=0.95, n=1
+        self, prompt, system_prompt=None, temperature=0.7, max_tokens=4096, top_p=0.95, n=1, seed=None
     ):
         sys_prompt_arg = system_prompt if system_prompt else self.system_prompt
         cache_or_none = self._check_cache(sys_prompt_arg + prompt)
@@ -42,13 +42,14 @@ class ChatVLLM(EngineLM, CachedEngine):
             conversation = [{"role": "system", "content": sys_prompt_arg}]
 
         conversation += [{"role": "user", "content": prompt}]
-        chat_str = self.tokenizer.apply_chat_template(conversation, tokenize=False)
+        chat_str = self.tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
 
         sampling_params = SamplingParams(
             temperature=temperature, 
             max_tokens=max_tokens, 
             top_p=top_p, 
-            n=n, 
+            n=n,
+            seed=seed,
             stop=['<|end_of_text|>', '<|eot_id|>'],
         )
 

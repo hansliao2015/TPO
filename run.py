@@ -40,7 +40,9 @@ def config() -> argparse.Namespace:
                         help="Identifier or path for the reward model.")
     parser.add_argument("--server_model", type=str, default="meta-llama/Llama-3.1-70B-Instruct",
                         help="Base model used for serving via an API.")
-    parser.add_argument("--ip", type=str, help="Server IP (i.e. 127.0.0.1).")
+    parser.add_argument("--ip", type=str, default=None,
+                        help="Server IP (i.e. 127.0.0.1). If omitted, the model is loaded "
+                             "in-process via vLLM offline mode (no server needed).")
     parser.add_argument("--port", type=int, default=8000, help="Port number for the model server.")
     parser.add_argument("--tpo_mode", type=str, default="tpo",
                         help="Mode for test-time preference optimization (tpo, revision, or bon).")
@@ -60,6 +62,12 @@ def config() -> argparse.Namespace:
                         help="Sampling temperature for generation.")
     parser.add_argument("--sample_size", type=int, default=5,
                         help="Number of responses to sample for each step.")
+    parser.add_argument("--gpu_memory_utilization", type=float, default=0.35,
+                        help="vLLM GPU memory fraction for the policy model (local mode only); "
+                             "leave headroom for the reward model on the same GPU.")
+    parser.add_argument("--dtype", type=str, default="bfloat16", choices=["bfloat16", "float16"],
+                        help="dtype for the local policy model and reward model "
+                             "(use float16 on pre-Ampere GPUs like T4/V100).")
     return parser.parse_args()
 
 
@@ -73,17 +81,27 @@ if __name__ == "__main__":
     set_random(args.seed)
 
     # Construct model name and engine
-    model_name = f"server-{args.server_model}"
-    llm_engine = tg.get_engine(
-        model_name,
-        base_url=f"http://{args.ip}:{args.port}/v1",
-        api_key="token-abc123",
-        max_token=args.max_tokens_all,
-    )
+    if args.ip:
+        model_name = f"server-{args.server_model}"
+        llm_engine = tg.get_engine(
+            model_name,
+            base_url=f"http://{args.ip}:{args.port}/v1",
+            api_key="token-abc123",
+            max_token=args.max_tokens_all,
+        )
+    else:
+        # Local mode: load the policy model in-process with vLLM (single GPU, no server).
+        model_name = f"vllm-{args.server_model}"
+        llm_engine = tg.get_engine(
+            model_name,
+            gpu_memory_utilization=args.gpu_memory_utilization,
+            max_model_len=args.max_tokens_all,
+            dtype=args.dtype,
+        )
 
     # Initialize reward model
     reward_model_name = args.reward_model
-    rm = TPORewardModel(reward_model_name)
+    rm = TPORewardModel(reward_model_name, dtype=args.dtype)
 
     # Load data
     data_path = args.data_path

@@ -19,17 +19,22 @@ class PipelineDataset(torch.utils.data.Dataset):
 
 
 class TPORewardModel():
-    def __init__(self, reward_model: str = "sfairXC/FsfairX-LLaMA3-RM-v0.1"):
+    def __init__(self, reward_model: str = "sfairXC/FsfairX-LLaMA3-RM-v0.1", dtype: str = "bfloat16"):
         self.tokenizer = AutoTokenizer.from_pretrained(reward_model)
         self.pipe = pipeline(
                 "sentiment-analysis",
                 model=reward_model,
                 device_map="auto",
                 tokenizer=self.tokenizer,
-                model_kwargs={"torch_dtype": torch.bfloat16})
+                model_kwargs={"torch_dtype": getattr(torch, dtype)})
 
     def compute_reward_scores(self, messages: List, pipe_kwargs: Dict[str, Any]) -> List[float]:
-        test_texts = [_.replace(self.tokenizer.bos_token, "") for _ in self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)]
+        if self.tokenizer.chat_template is not None:
+            test_texts = [_.replace(self.tokenizer.bos_token, "") for _ in self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)]
+        else:
+            # RMs without a chat template (e.g. deberta-based) score (query, response) as a text pair
+            test_texts = [{"text": m[0]["content"], "text_pair": m[1]["content"]} for m in messages]
+            pipe_kwargs = {**pipe_kwargs, "truncation": True}
 
         test_dataset = PipelineDataset(test_texts)
         rewards = [output[0]["score"] for output in self.pipe(test_dataset, **pipe_kwargs)]
